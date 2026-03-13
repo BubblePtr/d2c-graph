@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "d2c-graph"
+version = "0.1.0"
+description = "Strict LangGraph pipeline for converting Figma designs into React and KMP projects."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "langchain-google-genai>=2.1.12",
+  "langchain-openai>=0.3.18",
+  "langgraph>=0.6.7",
+  "langgraph-checkpoint-sqlite>=2.0.11",
+  "pydantic>=2.11.3",
+  "pyyaml>=6.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.5",
+]
+
+[project.scripts]
+d2c-graph = "d2c_graph.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"d2c_graph.prompts" = ["*.md"]
+"d2c_graph.templates" = ["**/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

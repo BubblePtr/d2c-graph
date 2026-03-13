@@ -1,0 +1,13 @@
+:root {
+  color: #111827;
+  background: #f8fafc;
+  font-family: "SF Pro Display", "Helvetica Neue", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}

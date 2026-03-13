@@ -1,0 +1,2 @@
+[console_scripts]
+d2c-graph = d2c_graph.cli:main

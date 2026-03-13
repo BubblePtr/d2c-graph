@@ -1,0 +1,26 @@
+models:
+  vision:
+    provider: gemini
+    model: gemini-2.5-pro
+    api_key_env: GEMINI_API_KEY
+  text:
+    provider: openai_compatible
+    model: gpt-4.1
+    api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+
+d2c_mcp:
+  command: d2c-mcp-server
+  args: []
+  tool_name: generate_react_from_figma
+  figma_arg_name: figma_url
+  extra_tool_args: {}
+  protocol_version: "2024-11-05"
+  startup_timeout_seconds: 20
+  request_timeout_seconds: 180
+
+build:
+  react:
+    command: npm install && npm run build
+  kmp:
+    command: ./gradlew build
