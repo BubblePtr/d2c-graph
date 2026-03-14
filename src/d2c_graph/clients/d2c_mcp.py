@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import subprocess
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from d2c_graph.config import D2CMcpConfig
+from d2c_graph.clients.mcp_process import create_mcp_client
 
 
 @dataclass(slots=True)
@@ -15,111 +15,70 @@ class D2CResult:
     files: dict[str, str]
     entry_file: str
     raw_response: dict[str, Any]
+    cache_hit: bool = False
 
 
 class D2CMcpClient:
     def __init__(self, config: D2CMcpConfig):
         self.config = config
-        self._message_id = 0
+        self._mcp_client = create_mcp_client(config)
 
-    def generate_react_from_figma(self, figma_url: str) -> D2CResult:
+    def generate_react_from_figma(self, figma_url: str, *, cache_dir: str | Path | None = None) -> D2CResult:
+        if cache_dir is not None:
+            cached = self._load_cached_result(cache_dir, figma_url)
+            if cached is not None:
+                return cached
+
         arguments = dict(self.config.extra_tool_args)
         arguments[self.config.figma_arg_name] = figma_url
-        with subprocess.Popen(
-            [self.config.command, *self.config.args],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=False,
-        ) as process:
-            self._initialize(process)
-            response = self._request(
-                process,
-                "tools/call",
-                {"name": self.config.tool_name, "arguments": arguments},
-            )
-            if process.stdin:
-                process.stdin.close()
-            parsed = self._normalize_tool_result(response)
+        response = self._mcp_client.call_tool(self.config.tool_name, arguments)
+        parsed = self._normalize_tool_result(response)
+        result = D2CResult(
+            files=parsed["files"],
+            entry_file=parsed["entry_file"],
+            raw_response=response,
+        )
+        if cache_dir is not None:
+            self._write_cached_result(cache_dir, figma_url, result)
+        return result
+
+    def _cache_file_path(self, cache_dir: str | Path, figma_url: str) -> Path:
+        digest = hashlib.sha256(figma_url.encode("utf-8")).hexdigest()
+        return Path(cache_dir) / f"{digest}.json"
+
+    def _load_cached_result(self, cache_dir: str | Path, figma_url: str) -> D2CResult | None:
+        cache_path = self._cache_file_path(cache_dir, figma_url)
+        if not cache_path.exists():
+            return None
+
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            parsed = self._normalize_payload(payload)
+            raw_response = payload.get("raw_response")
+            if raw_response is not None and not isinstance(raw_response, dict):
+                raise ValueError("Cached raw_response must be a JSON object")
             return D2CResult(
                 files=parsed["files"],
                 entry_file=parsed["entry_file"],
-                raw_response=response,
+                raw_response=raw_response or {},
+                cache_hit=True,
             )
+        except (OSError, json.JSONDecodeError, ValueError):
+            cache_path.unlink(missing_ok=True)
+            return None
 
-    def _initialize(self, process: subprocess.Popen[bytes]) -> None:
-        self._request(
-            process,
-            "initialize",
-            {
-                "protocolVersion": self.config.protocol_version,
-                "capabilities": {},
-                "clientInfo": {"name": "d2c-graph", "version": "0.1.0"},
-            },
-        )
-        self._notify(process, "notifications/initialized", {})
-
-    def _request(
-        self,
-        process: subprocess.Popen[bytes],
-        method: str,
-        params: dict[str, Any],
-    ) -> dict[str, Any]:
-        self._message_id += 1
+    def _write_cached_result(self, cache_dir: str | Path, figma_url: str, result: D2CResult) -> None:
+        cache_path = self._cache_file_path(cache_dir, figma_url)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "jsonrpc": "2.0",
-            "id": self._message_id,
-            "method": method,
-            "params": params,
+            "figma_url": figma_url,
+            "entry_file": result.entry_file,
+            "files": result.files,
+            "raw_response": result.raw_response,
         }
-        self._write_message(process, payload)
-        deadline = time.monotonic() + self.config.request_timeout_seconds
-        while time.monotonic() < deadline:
-            message = self._read_message(process)
-            if "id" not in message or message["id"] != self._message_id:
-                continue
-            if "error" in message:
-                raise RuntimeError(f"MCP error for {method}: {message['error']}")
-            return message.get("result", {})
-        raise TimeoutError(f"MCP request timed out for method {method}")
-
-    def _notify(
-        self,
-        process: subprocess.Popen[bytes],
-        method: str,
-        params: dict[str, Any],
-    ) -> None:
-        self._write_message(
-            process,
-            {"jsonrpc": "2.0", "method": method, "params": params},
-        )
-
-    def _write_message(self, process: subprocess.Popen[bytes], payload: dict[str, Any]) -> None:
-        if process.stdin is None:
-            raise RuntimeError("MCP process stdin is unavailable")
-        body = json.dumps(payload).encode("utf-8")
-        header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
-        process.stdin.write(header + body)
-        process.stdin.flush()
-
-    def _read_message(self, process: subprocess.Popen[bytes]) -> dict[str, Any]:
-        if process.stdout is None:
-            raise RuntimeError("MCP process stdout is unavailable")
-        headers: dict[str, str] = {}
-        while True:
-            line = process.stdout.readline()
-            if not line:
-                stderr = b""
-                if process.stderr is not None:
-                    stderr = process.stderr.read()
-                raise RuntimeError(f"MCP server closed unexpectedly: {stderr.decode('utf-8', errors='ignore')}")
-            if line == b"\r\n":
-                break
-            key, _, value = line.decode("utf-8").partition(":")
-            headers[key.strip().lower()] = value.strip()
-        content_length = int(headers["content-length"])
-        body = process.stdout.read(content_length)
-        return json.loads(body.decode("utf-8"))
+        temp_path = cache_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path.replace(cache_path)
 
     def _normalize_tool_result(self, result: dict[str, Any]) -> dict[str, Any]:
         if "structuredContent" in result:

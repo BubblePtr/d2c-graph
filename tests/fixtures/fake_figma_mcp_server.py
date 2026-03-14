@@ -6,15 +6,10 @@ import sys
 from pathlib import Path
 
 
-def record_call() -> None:
-    counter_path = os.getenv("FAKE_MCP_COUNTER_FILE")
-    if not counter_path:
-        return
-    current = 0
-    path = Path(counter_path).resolve()
-    if path.exists():
-        current = int(path.read_text(encoding="utf-8") or "0")
-    path.write_text(str(current + 1), encoding="utf-8")
+PNG_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sot6RcAAAAASUVORK5CYII="
+)
 
 
 def read_message() -> dict:
@@ -39,6 +34,15 @@ def write_message(payload: dict) -> None:
     sys.stdout.buffer.flush()
 
 
+def record_call() -> None:
+    counter_path = os.getenv("FAKE_FIGMA_COUNTER_FILE")
+    if not counter_path:
+        return
+    path = Path(counter_path).resolve()
+    current = int(path.read_text(encoding="utf-8") or "0") if path.exists() else 0
+    path.write_text(str(current + 1), encoding="utf-8")
+
+
 while True:
     message = read_message()
     method = message.get("method")
@@ -46,15 +50,7 @@ while True:
         write_message({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {}}})
     elif method == "tools/call":
         record_call()
-        if os.getenv("FAKE_MCP_MODE") == "invalid":
-            result = {"entry_file": "src/App.tsx"}
-        else:
-            result = {
-                "files": {
-                    "src/App.tsx": "export default function App() { return <div>Hello</div>; }",
-                },
-                "entry_file": "src/App.tsx",
-            }
+        result = {"url": PNG_DATA_URL}
         write_message(
             {
                 "jsonrpc": "2.0",

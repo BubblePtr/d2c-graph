@@ -6,12 +6,25 @@ from pathlib import Path
 from langgraph.checkpoint.memory import InMemorySaver
 
 from d2c_graph.clients.d2c_mcp import D2CResult
+from d2c_graph.clients.figma_mcp import FigmaScreenshotResult
 from d2c_graph.config import AppConfig
 from d2c_graph.graph.workflow import PipelineDependencies, PipelineWorkflow, default_initial_state
 
 
+class FakeFigmaClient:
+    def __init__(self, screenshot_path: Path):
+        self.screenshot_path = screenshot_path
+
+    def fetch_screenshot(self, figma_url: str, *, cache_dir=None) -> FigmaScreenshotResult:
+        return FigmaScreenshotResult(
+            image_path=str(self.screenshot_path),
+            raw_response={"figma_url": figma_url},
+            source_url="file://fake",
+        )
+
+
 class FakeD2CClient:
-    def generate_react_from_figma(self, figma_url: str) -> D2CResult:
+    def generate_react_from_figma(self, figma_url: str, *, cache_dir=None) -> D2CResult:
         return D2CResult(
             files={
                 "src/App.tsx": "export default function App() { return <div>Original</div>; }",
@@ -67,6 +80,9 @@ def build_test_config() -> AppConfig:
                     "base_url": "https://example.com/v1",
                 },
             },
+            "figma_mcp": {
+                "command": "fake",
+            },
             "d2c_mcp": {
                 "command": "fake",
                 "tool_name": "generate",
@@ -86,13 +102,14 @@ def test_graph_runs_end_to_end(tmp_path: Path):
     workflow = PipelineWorkflow(
         build_test_config(),
         PipelineDependencies(
+            figma_client=FakeFigmaClient(screenshot),
             d2c_client=FakeD2CClient(),
             text_runner=FakeRunner(),
             vision_runner=FakeRunner(),
         ),
     )
     graph = workflow.compile(InMemorySaver())
-    state = default_initial_state("https://figma.example.com/file/123", str(screenshot), str(tmp_path))
+    state = default_initial_state("https://figma.example.com/file/123?node-id=1-2", str(tmp_path))
     result = graph.invoke(state, config={"configurable": {"thread_id": state["thread_id"]}})
 
     assert (tmp_path / "d2c" / "src" / "App.tsx").exists()

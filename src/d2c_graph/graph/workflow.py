@@ -11,6 +11,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from d2c_graph.clients.d2c_mcp import D2CMcpClient
+from d2c_graph.clients.figma_mcp import FigmaMcpClient
 from d2c_graph.config import AppConfig
 from d2c_graph.graph.checks import (
     assert_no_absolute_kmp_layout,
@@ -31,6 +32,7 @@ from d2c_graph.runtime import (
 
 @dataclass(slots=True)
 class PipelineDependencies:
+    figma_client: FigmaMcpClient
     d2c_client: D2CMcpClient
     text_runner: PromptRunner
     vision_runner: PromptRunner
@@ -52,6 +54,7 @@ class PipelineWorkflow:
         graph = StateGraph(GraphState)
         graph.add_node("validate_inputs", self._tracked("validate_inputs", self._validate_inputs))
         graph.add_node("fetch_d2c_react", self._tracked("fetch_d2c_react", self._fetch_d2c_react))
+        graph.add_node("fetch_figma_screenshot", self._tracked("fetch_figma_screenshot", self._fetch_figma_screenshot))
         graph.add_node("analyze_screenshot", self._tracked("analyze_screenshot", self._analyze_screenshot))
         graph.add_node("reconcile_facts", self._tracked("reconcile_facts", self._reconcile_facts))
         graph.add_node("react_subgraph", react_graph)
@@ -60,9 +63,9 @@ class PipelineWorkflow:
 
         graph.add_edge(START, "validate_inputs")
         graph.add_edge("validate_inputs", "fetch_d2c_react")
-        graph.add_edge("validate_inputs", "analyze_screenshot")
-        graph.add_edge("fetch_d2c_react", "reconcile_facts")
-        graph.add_edge("analyze_screenshot", "reconcile_facts")
+        graph.add_edge("validate_inputs", "fetch_figma_screenshot")
+        graph.add_edge("fetch_figma_screenshot", "analyze_screenshot")
+        graph.add_edge(["fetch_d2c_react", "analyze_screenshot"], "reconcile_facts")
         graph.add_edge("reconcile_facts", "react_subgraph")
         graph.add_edge("react_subgraph", "kmp_subgraph")
         graph.add_edge("kmp_subgraph", "finalize")
@@ -139,18 +142,11 @@ class PipelineWorkflow:
 
     def _validate_inputs(self, state: GraphState, node_dir: Path) -> GraphState:
         figma_url = state.get("figma_url")
-        screenshot_path = state.get("screenshot_path")
         workspace_root = state.get("workspace_root")
         if not figma_url:
             raise ValueError("figma_url is required")
-        if not screenshot_path:
-            raise ValueError("screenshot_path is required")
         if not workspace_root:
             raise ValueError("workspace_root is required")
-
-        image = Path(screenshot_path)
-        if not image.exists():
-            raise FileNotFoundError(f"screenshot not found: {image}")
 
         root = ensure_directory(workspace_root)
         ensure_directory(root / "d2c")
@@ -159,7 +155,7 @@ class PipelineWorkflow:
         job_id = state.get("job_id") or uuid.uuid4().hex[:12]
         thread_id = state.get("thread_id") or job_id
         run_root = ensure_directory(root / "runs" / thread_id)
-        write_json_file(node_dir / "validated.json", {"figma_url": figma_url, "screenshot_path": str(image)})
+        write_json_file(node_dir / "validated.json", {"figma_url": figma_url})
         return {
             "job_id": job_id,
             "thread_id": thread_id,
@@ -170,9 +166,39 @@ class PipelineWorkflow:
             },
         }
 
+    def _fetch_figma_screenshot(self, state: GraphState, node_dir: Path) -> GraphState:
+        cache_dir = Path(state["workspace_root"]) / ".cache" / "figma_screenshots"
+        result = self.dependencies.figma_client.fetch_screenshot(
+            state["figma_url"],
+            cache_dir=cache_dir,
+        )
+        write_json_file(
+            node_dir / "screenshot_summary.json",
+            {
+                "screenshot_path": result.image_path,
+                "cache_hit": result.cache_hit,
+                "cache_dir": str(cache_dir),
+                "source_url": result.source_url,
+            },
+        )
+        write_json_file(node_dir / "screenshot_raw_response.json", result.raw_response)
+        return {"screenshot_path": result.image_path}
+
     def _fetch_d2c_react(self, state: GraphState, node_dir: Path) -> GraphState:
-        result = self.dependencies.d2c_client.generate_react_from_figma(state["figma_url"])
-        write_json_file(node_dir / "d2c_summary.json", {"entry_file": result.entry_file, "files": list(result.files)})
+        cache_dir = Path(state["workspace_root"]) / ".cache" / "d2c_mcp"
+        result = self.dependencies.d2c_client.generate_react_from_figma(
+            state["figma_url"],
+            cache_dir=cache_dir,
+        )
+        write_json_file(
+            node_dir / "d2c_summary.json",
+            {
+                "entry_file": result.entry_file,
+                "files": list(result.files),
+                "cache_hit": result.cache_hit,
+                "cache_dir": str(cache_dir),
+            },
+        )
         write_json_file(node_dir / "d2c_raw_response.json", result.raw_response)
         return {
             "d2c_raw_files": result.files,
@@ -314,7 +340,7 @@ class PipelineWorkflow:
             "job_id": state["job_id"],
             "thread_id": state["thread_id"],
             "figma_url": state["figma_url"],
-            "screenshot_path": state["screenshot_path"],
+            "screenshot_path": state.get("screenshot_path"),
             "workspace_root": state["workspace_root"],
             "model_plan": state.get("model_plan", {}),
             "d2c_entry": state.get("d2c_entry"),
@@ -351,11 +377,10 @@ class PipelineWorkflow:
         return int((end - start).total_seconds() * 1000)
 
 
-def default_initial_state(figma_url: str, screenshot_path: str, workspace_root: str) -> GraphState:
+def default_initial_state(figma_url: str, workspace_root: str) -> GraphState:
     thread_id = uuid.uuid4().hex[:12]
     return {
         "figma_url": figma_url,
-        "screenshot_path": screenshot_path,
         "workspace_root": workspace_root,
         "thread_id": thread_id,
         "job_id": thread_id,

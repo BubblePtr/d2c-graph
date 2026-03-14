@@ -11,6 +11,22 @@ def test_list_run_summaries_reads_manifest(tmp_path: Path) -> None:
     node_root = run_root / "nodes" / "verify_react_build"
     node_root.mkdir(parents=True)
     write_json_file(
+        run_root / "nodes" / "fetch_figma_screenshot" / "screenshot_summary.json",
+        {
+            "cache_hit": True,
+            "cache_dir": str(tmp_path / ".cache" / "figma_screenshots"),
+            "screenshot_path": str(tmp_path / ".cache" / "figma_screenshots" / "screen.png"),
+        },
+    )
+    write_json_file(
+        run_root / "nodes" / "fetch_d2c_react" / "d2c_summary.json",
+        {
+            "cache_hit": False,
+            "cache_dir": str(tmp_path / ".cache" / "d2c_mcp"),
+            "files": ["src/App.tsx"],
+        },
+    )
+    write_json_file(
         run_root / "manifest.json",
         {
             "thread_id": "thread-123",
@@ -37,11 +53,21 @@ def test_list_run_summaries_reads_manifest(tmp_path: Path) -> None:
     assert summaries[0]["status"] == "completed"
     assert summaries[0]["duration_ms"] == 5000
     assert summaries[0]["node_total"] == 1
+    assert summaries[0]["cache"]["figma_screenshot"]["cache_hit"] is True
+    assert summaries[0]["cache"]["d2c"]["cache_hit"] is False
 
 
 def test_load_run_detail_reads_node_files_without_manifest(tmp_path: Path) -> None:
     node_root = tmp_path / "runs" / "thread-456" / "nodes" / "generate_react"
     node_root.mkdir(parents=True)
+    write_json_file(
+        tmp_path / "runs" / "thread-456" / "nodes" / "fetch_figma_screenshot" / "screenshot_summary.json",
+        {
+            "cache_hit": True,
+            "cache_dir": str(tmp_path / ".cache" / "figma_screenshots"),
+            "screenshot_path": str(tmp_path / ".cache" / "figma_screenshots" / "screen.png"),
+        },
+    )
     write_text_file(node_root / "prompt.txt", "prompt body")
     write_text_file(node_root / "response.txt", "response body")
     write_json_file(node_root / "failure.json", {"error": "boom"})
@@ -50,9 +76,10 @@ def test_load_run_detail_reads_node_files_without_manifest(tmp_path: Path) -> No
 
     assert detail is not None
     assert detail["status"] == "failed"
-    assert detail["nodes"][0]["name"] == "generate_react"
-    assert detail["nodes"][0]["status"] == "failed"
-    assert {file["name"] for file in detail["nodes"][0]["files"]} == {
+    assert detail["cache"]["figma_screenshot"]["cache_hit"] is True
+    generate_react = next(node for node in detail["nodes"] if node["name"] == "generate_react")
+    assert generate_react["status"] == "failed"
+    assert {file["name"] for file in generate_react["files"]} == {
         "failure.json",
         "prompt.txt",
         "response.txt",

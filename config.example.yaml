@@ -9,9 +9,27 @@ models:
     api_key_env: OPENAI_API_KEY
     base_url: https://api.openai.com/v1
 
+figma_mcp:
+  # 官方推荐的 remote/desktop MCP 配置
+  type: http
+  url: https://mcp.figma.com/mcp
+  # 本地桌面版也可以写成：
+  # type: http
+  # url: http://127.0.0.1:3845/mcp
+  tool_name: get_screenshot
+  file_key_arg_name: fileKey
+  node_id_arg_name: nodeId
+  protocol_version: "2024-11-05"
+  startup_timeout_seconds: 20
+  request_timeout_seconds: 180
+
 d2c_mcp:
+  # stdio 模式
   command: d2c-mcp-server
   args: []
+  # sse 模式示例
+  # transport: sse
+  # url: https://example.com/d2c/sse
   tool_name: generate_react_from_figma
   figma_arg_name: figma_url
   extra_tool_args: {}

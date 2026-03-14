@@ -7,6 +7,7 @@ from pathlib import Path
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from d2c_graph.clients.d2c_mcp import D2CMcpClient
+from d2c_graph.clients.figma_mcp import FigmaMcpClient
 from d2c_graph.config import AppConfig
 from d2c_graph.dashboard import serve_dashboard
 from d2c_graph.graph.workflow import PipelineDependencies, PipelineWorkflow, default_initial_state
@@ -21,7 +22,6 @@ def main() -> None:
 
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--figma-url", required=True)
-    run_parser.add_argument("--screenshot", required=True)
     run_parser.add_argument("--out", required=True)
     run_parser.add_argument("--config", default="config.yaml")
 
@@ -49,7 +49,7 @@ def main() -> None:
 def run_command(args: argparse.Namespace) -> None:
     config = AppConfig.load(args.config)
     out_dir = ensure_directory(args.out)
-    initial_state = default_initial_state(args.figma_url, args.screenshot, str(out_dir))
+    initial_state = default_initial_state(args.figma_url, str(out_dir))
     run_root = ensure_directory(out_dir / "runs" / initial_state["thread_id"])
     shutil.copyfile(args.config, run_root / "resolved_config.yaml")
 
@@ -80,8 +80,10 @@ def dashboard_command(args: argparse.Namespace) -> None:
 
 
 def build_graph(config: AppConfig, checkpointer):
+    figma_client = FigmaMcpClient(config.figma_mcp)
     d2c_client = D2CMcpClient(config.d2c_mcp)
     dependencies = PipelineDependencies(
+        figma_client=figma_client,
         d2c_client=d2c_client,
         text_runner=JsonPromptRunner(create_text_model(config)),
         vision_runner=JsonPromptRunner(create_vision_model(config)),

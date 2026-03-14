@@ -24,6 +24,7 @@ def list_run_summaries(out_dir: str | Path) -> list[dict[str, Any]]:
             continue
         manifest = _read_json_file(run_root / "manifest.json")
         node_records = _collect_node_records(run_root, manifest)
+        cache_summary = _load_cache_summary(run_root)
         summaries.append(
             {
                 "thread_id": str(manifest.get("thread_id") or run_root.name),
@@ -42,6 +43,7 @@ def list_run_summaries(out_dir: str | Path) -> list[dict[str, Any]]:
                 "node_failed": sum(1 for record in node_records if record.get("status") == "failed"),
                 "run_root": str(run_root),
                 "updated_at": _to_iso(_path_mtime(run_root)),
+                "cache": cache_summary,
             }
         )
     return summaries
@@ -54,6 +56,7 @@ def load_run_detail(out_dir: str | Path, thread_id: str) -> dict[str, Any] | Non
 
     manifest = _read_json_file(run_root / "manifest.json")
     node_records = _collect_node_records(run_root, manifest)
+    cache_summary = _load_cache_summary(run_root)
     record_by_name = {str(record.get("node")): record for record in node_records if record.get("node")}
     nodes: list[dict[str, Any]] = []
     nodes_root = run_root / "nodes"
@@ -85,6 +88,7 @@ def load_run_detail(out_dir: str | Path, thread_id: str) -> dict[str, Any] | Non
         "run_root": str(run_root),
         "manifest": manifest,
         "status": _derive_run_status(manifest, node_records),
+        "cache": cache_summary,
         "nodes": nodes,
     }
 
@@ -201,6 +205,13 @@ def _derive_node_status(node_dir: Path) -> str:
     if (node_dir / "state_output.json").exists():
         return "completed"
     return "running"
+
+
+def _load_cache_summary(run_root: Path) -> dict[str, dict[str, Any]]:
+    return {
+        "figma_screenshot": _read_json_file(run_root / "nodes" / "fetch_figma_screenshot" / "screenshot_summary.json"),
+        "d2c": _read_json_file(run_root / "nodes" / "fetch_d2c_react" / "d2c_summary.json"),
+    }
 
 
 def _read_node_file(file_path: Path) -> dict[str, Any]:
@@ -419,6 +430,13 @@ INDEX_HTML = """<!doctype html>
       return `<span class="badge ${value}">${value}</span>`;
     }
 
+    function cacheBadge(label, summary) {
+      if (!summary || Object.keys(summary).length === 0) {
+        return `<span>${label}: n/a</span>`;
+      }
+      return `<span>${label}: ${summary.cache_hit ? "hit" : "miss"}</span>`;
+    }
+
     function escapeHtml(value) {
       return String(value ?? "")
         .replaceAll("&", "&amp;")
@@ -451,6 +469,10 @@ INDEX_HTML = """<!doctype html>
             <span>${fmtDuration(run.duration_ms)}</span>
           </div>
           <div class="meta muted">
+            ${cacheBadge("IMG cache", run.cache?.figma_screenshot)}
+            ${cacheBadge("D2C cache", run.cache?.d2c)}
+          </div>
+          <div class="meta muted">
             <span>${fmt(run.updated_at)}</span>
           </div>
         </div>
@@ -472,6 +494,7 @@ INDEX_HTML = """<!doctype html>
 
     function renderDetail(payload) {
       const manifest = payload.manifest || {};
+      const cache = payload.cache || {};
       const host = document.getElementById("content");
       host.className = "stack";
       host.innerHTML = `
@@ -495,6 +518,29 @@ INDEX_HTML = """<!doctype html>
             <div class="card">
               <h3>Artifacts</h3>
               <div class="muted">${Object.keys(manifest.react_artifacts || {}).length} react, ${Object.keys(manifest.kmp_artifacts || {}).length} kmp</div>
+            </div>
+            <div class="card">
+              <h3>Cache</h3>
+              <div class="muted">${cacheBadge("IMG cache", cache.figma_screenshot)}</div>
+              <div class="muted">${cacheBadge("D2C cache", cache.d2c)}</div>
+            </div>
+          </div>
+        </section>
+        <section class="grid">
+          <div class="card">
+            <h3>Figma Screenshot Cache</h3>
+            <div class="muted"><code>${escapeHtml(cache.figma_screenshot?.screenshot_path || "n/a")}</code></div>
+            <div class="meta muted">
+              <span>${cacheBadge("Status", cache.figma_screenshot)}</span>
+              <span><code>${escapeHtml(cache.figma_screenshot?.cache_dir || "n/a")}</code></span>
+            </div>
+          </div>
+          <div class="card">
+            <h3>D2C Cache</h3>
+            <div class="muted"><code>${escapeHtml(cache.d2c?.cache_dir || "n/a")}</code></div>
+            <div class="meta muted">
+              <span>${cacheBadge("Status", cache.d2c)}</span>
+              <span>${Array.isArray(cache.d2c?.files) ? cache.d2c.files.length : 0} files</span>
             </div>
           </div>
         </section>
