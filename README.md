@@ -36,3 +36,16 @@ d2c-graph run \
 ```bash
 d2c-graph resume --thread-id <thread-id> --out ./workspace
 ```
+
+查看运行日志与节点状态：
+
+```bash
+d2c-graph dashboard --out ./workspace --host 127.0.0.1 --port 8000
+```
+
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000) 后可以看到：
+
+- 运行列表与整体状态
+- 每个节点的耗时、状态与错误
+- LLM 节点的 `prompt.txt` / `response.txt` / `response.json`
+- 构建节点的 `build.json`，包含 `stdout` / `stderr`

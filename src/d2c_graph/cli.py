@@ -8,6 +8,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from d2c_graph.clients.d2c_mcp import D2CMcpClient
 from d2c_graph.config import AppConfig
+from d2c_graph.dashboard import serve_dashboard
 from d2c_graph.graph.workflow import PipelineDependencies, PipelineWorkflow, default_initial_state
 from d2c_graph.llm.factory import create_text_model, create_vision_model
 from d2c_graph.llm.runner import JsonPromptRunner
@@ -30,9 +31,17 @@ def main() -> None:
     resume_parser.add_argument("--out", default=".")
     resume_parser.add_argument("--config")
 
+    dashboard_parser = subparsers.add_parser("dashboard")
+    dashboard_parser.add_argument("--out", default=".")
+    dashboard_parser.add_argument("--host", default="127.0.0.1")
+    dashboard_parser.add_argument("--port", type=int, default=8000)
+
     args = parser.parse_args()
     if args.command == "run":
         run_command(args)
+        return
+    if args.command == "dashboard":
+        dashboard_command(args)
         return
     resume_command(args)
 
@@ -63,6 +72,11 @@ def resume_command(args: argparse.Namespace) -> None:
     with SqliteSaver.from_conn_string(str(out_dir / "runs" / "checkpoints.sqlite")) as checkpointer:
         graph = build_graph(config, checkpointer)
         graph.invoke({}, config={"configurable": configurable})
+
+
+def dashboard_command(args: argparse.Namespace) -> None:
+    out_dir = ensure_directory(args.out)
+    serve_dashboard(out_dir, args.host, args.port)
 
 
 def build_graph(config: AppConfig, checkpointer):
