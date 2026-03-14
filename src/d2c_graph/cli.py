@@ -50,10 +50,10 @@ def run_command(args: argparse.Namespace) -> None:
     config = AppConfig.load(args.config)
     out_dir = ensure_directory(args.out)
     initial_state = default_initial_state(args.figma_url, str(out_dir))
-    run_root = ensure_directory(out_dir / "runs" / initial_state["thread_id"])
+    run_root = ensure_directory(out_dir / initial_state["thread_id"])
     shutil.copyfile(args.config, run_root / "resolved_config.yaml")
 
-    with SqliteSaver.from_conn_string(str(out_dir / "runs" / "checkpoints.sqlite")) as checkpointer:
+    with SqliteSaver.from_conn_string(str(run_root / "checkpoints.sqlite")) as checkpointer:
         graph = build_graph(config, checkpointer)
         graph.invoke(
             initial_state,
@@ -63,13 +63,14 @@ def run_command(args: argparse.Namespace) -> None:
 
 def resume_command(args: argparse.Namespace) -> None:
     out_dir = ensure_directory(args.out)
-    config_path = args.config or out_dir / "runs" / args.thread_id / "resolved_config.yaml"
+    run_root = _resolve_run_root(out_dir, args.thread_id)
+    config_path = args.config or run_root / "resolved_config.yaml"
     config = AppConfig.load(config_path)
     configurable = {"thread_id": args.thread_id}
     if args.checkpoint_id:
         configurable["checkpoint_id"] = args.checkpoint_id
 
-    with SqliteSaver.from_conn_string(str(out_dir / "runs" / "checkpoints.sqlite")) as checkpointer:
+    with SqliteSaver.from_conn_string(str(run_root / "checkpoints.sqlite")) as checkpointer:
         graph = build_graph(config, checkpointer)
         graph.invoke({}, config={"configurable": configurable})
 
@@ -90,6 +91,16 @@ def build_graph(config: AppConfig, checkpointer):
     )
     workflow = PipelineWorkflow(config, dependencies)
     return workflow.compile(checkpointer)
+
+
+def _resolve_run_root(out_dir: Path, thread_id: str) -> Path:
+    direct = out_dir / thread_id
+    if direct.exists():
+        return direct
+    legacy = out_dir / "runs" / thread_id
+    if legacy.exists():
+        return legacy
+    return direct
 
 
 if __name__ == "__main__":

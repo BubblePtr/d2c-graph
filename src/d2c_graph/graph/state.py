@@ -25,6 +25,7 @@ class GraphState(TypedDict, total=False):
     d2c_raw_files: dict[str, str]
     d2c_entry: str
     d2c_raw_response: dict[str, Any]
+    d2c_artifacts: dict[str, str]
     visual_anchors_raw: str
     visual_anchors_reconciled: str
     react_generated_files: dict[str, str]

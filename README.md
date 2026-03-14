@@ -6,9 +6,9 @@
 
 转换为：
 
-- `d2c/` 原始 React 代码
-- `react/` 响应式 React 工程
-- `kmp/` Compose Multiplatform 工程
+- `workspace/<thread_id>/d2c/` 原始 React 代码
+- `workspace/<thread_id>/react/` 响应式 React 工程
+- `workspace/<thread_id>/kmp/` Compose Multiplatform 工程
 
 ## 特点
 
@@ -33,6 +33,7 @@ d2c-graph run \
 ```
 
 `figma-url` 需要包含具体节点的 `node-id`，用于截图拉取与缓存键计算。
+`--out` 是固定的 workspace 根目录，每次运行会在其下创建一个新的 `<thread_id>/` 子目录，并将该次运行的缓存、日志、d2c、React、KMP 产物都写入该目录。
 
 MCP 配置同时支持两种方式：
 
@@ -54,6 +55,13 @@ d2c_mcp:
   transport: sse
   url: https://example.com/d2c/sse
   tool_name: generate_react_from_figma
+
+scaffold:
+  react:
+    command: npm create vite@latest {target} -- --template react-ts
+  kmp:
+    git_url: https://example.com/kmp-shell.git
+    # branch: main
 ```
 
 恢复执行：
@@ -74,3 +82,4 @@ d2c-graph dashboard --out ./workspace --host 127.0.0.1 --port 8000
 - 每个节点的耗时、状态与错误
 - LLM 节点的 `prompt.txt` / `response.txt` / `response.json`
 - 构建节点的 `build.json`，包含 `stdout` / `stderr`
+- 每次 run 的完整目录，如 `workspace/<thread_id>/react`

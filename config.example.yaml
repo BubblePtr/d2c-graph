@@ -37,6 +37,16 @@ d2c_mcp:
   startup_timeout_seconds: 20
   request_timeout_seconds: 180
 
+scaffold:
+  react:
+    # 在 workspace 根目录执行，{target} 会替换为本次 run 的 react 工程目录
+    command: npm create vite@latest {target} -- --template react-ts
+  kmp:
+    # 壳工程仓库地址
+    git_url: https://example.com/kmp-shell.git
+    # 可选：指定分支
+    # branch: main
+
 build:
   react:
     command: npm install && npm run build

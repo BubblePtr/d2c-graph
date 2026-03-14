@@ -14,14 +14,12 @@ MAX_FILE_CONTENT_CHARS = 50_000
 
 
 def list_run_summaries(out_dir: str | Path) -> list[dict[str, Any]]:
-    runs_root = _runs_root(out_dir)
-    if not runs_root.exists():
+    run_roots = _list_run_roots(out_dir)
+    if not run_roots:
         return []
 
     summaries: list[dict[str, Any]] = []
-    for run_root in sorted(runs_root.iterdir(), key=_path_mtime, reverse=True):
-        if not run_root.is_dir():
-            continue
+    for run_root in run_roots:
         manifest = _read_json_file(run_root / "manifest.json")
         node_records = _collect_node_records(run_root, manifest)
         cache_summary = _load_cache_summary(run_root)
@@ -50,7 +48,7 @@ def list_run_summaries(out_dir: str | Path) -> list[dict[str, Any]]:
 
 
 def load_run_detail(out_dir: str | Path, thread_id: str) -> dict[str, Any] | None:
-    run_root = _runs_root(out_dir) / thread_id
+    run_root = _resolve_run_root(out_dir, thread_id)
     if not run_root.exists() or not run_root.is_dir():
         return None
 
@@ -158,8 +156,33 @@ def _build_handler(out_dir: Path):
     return DashboardHandler
 
 
-def _runs_root(out_dir: str | Path) -> Path:
-    return Path(out_dir) / "runs"
+def _list_run_roots(out_dir: str | Path) -> list[Path]:
+    workspace_root = Path(out_dir)
+    if not workspace_root.exists():
+        return []
+
+    run_roots: dict[str, Path] = {}
+    for child in workspace_root.iterdir():
+        if child.name.startswith(".") or not child.is_dir() or child.name == "runs":
+            continue
+        if (child / "manifest.json").exists() or (child / "nodes").exists():
+            run_roots[child.name] = child
+
+    legacy_runs_root = workspace_root / "runs"
+    if legacy_runs_root.exists():
+        for child in legacy_runs_root.iterdir():
+            if child.is_dir() and child.name not in run_roots:
+                run_roots[child.name] = child
+
+    return sorted(run_roots.values(), key=_path_mtime, reverse=True)
+
+
+def _resolve_run_root(out_dir: str | Path, thread_id: str) -> Path:
+    workspace_root = Path(out_dir)
+    direct = workspace_root / thread_id
+    if direct.exists():
+        return direct
+    return workspace_root / "runs" / thread_id
 
 
 def _collect_node_records(run_root: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:

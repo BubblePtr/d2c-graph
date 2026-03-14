@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import traceback
 import uuid
 from dataclasses import dataclass
@@ -20,8 +21,8 @@ from d2c_graph.graph.checks import (
 from d2c_graph.graph.state import GraphState, NodeRun
 from d2c_graph.llm.runner import PromptRunner
 from d2c_graph.runtime import (
-    copy_tree,
     ensure_directory,
+    remove_path,
     reset_directory,
     run_shell_command,
     summarize_state,
@@ -45,7 +46,6 @@ class PipelineWorkflow:
         self.dependencies = dependencies
         self.package_root = Path(__file__).resolve().parents[1]
         self.prompts_dir = self.package_root / "prompts"
-        self.templates_dir = self.package_root / "templates"
 
     def compile(self, checkpointer: Any):
         react_graph = self._build_react_subgraph().compile(name="react_subgraph")
@@ -149,12 +149,9 @@ class PipelineWorkflow:
             raise ValueError("workspace_root is required")
 
         root = ensure_directory(workspace_root)
-        ensure_directory(root / "d2c")
-        ensure_directory(root / "react")
-        ensure_directory(root / "kmp")
         job_id = state.get("job_id") or uuid.uuid4().hex[:12]
         thread_id = state.get("thread_id") or job_id
-        run_root = ensure_directory(root / "runs" / thread_id)
+        run_root = ensure_directory(root / thread_id)
         write_json_file(node_dir / "validated.json", {"figma_url": figma_url})
         return {
             "job_id": job_id,
@@ -167,7 +164,7 @@ class PipelineWorkflow:
         }
 
     def _fetch_figma_screenshot(self, state: GraphState, node_dir: Path) -> GraphState:
-        cache_dir = Path(state["workspace_root"]) / ".cache" / "figma_screenshots"
+        cache_dir = Path(state["run_root"]) / ".cache" / "figma_screenshots"
         result = self.dependencies.figma_client.fetch_screenshot(
             state["figma_url"],
             cache_dir=cache_dir,
@@ -185,7 +182,7 @@ class PipelineWorkflow:
         return {"screenshot_path": result.image_path}
 
     def _fetch_d2c_react(self, state: GraphState, node_dir: Path) -> GraphState:
-        cache_dir = Path(state["workspace_root"]) / ".cache" / "d2c_mcp"
+        cache_dir = Path(state["run_root"]) / ".cache" / "d2c_mcp"
         result = self.dependencies.d2c_client.generate_react_from_figma(
             state["figma_url"],
             cache_dir=cache_dir,
@@ -236,20 +233,32 @@ class PipelineWorkflow:
         return {"visual_anchors_reconciled": str(reconciled)}
 
     def _save_d2c(self, state: GraphState, node_dir: Path) -> GraphState:
-        self._require_fields(state, "workspace_root", "d2c_raw_files")
-        d2c_root = reset_directory(Path(state["workspace_root"]) / "d2c")
+        self._require_fields(state, "run_root", "d2c_raw_files")
+        d2c_root = reset_directory(Path(state["run_root"]) / "d2c")
         artifacts: dict[str, str] = {}
         for relative_path, content in state["d2c_raw_files"].items():
             output = d2c_root / relative_path
             write_text_file(output, content)
             artifacts[relative_path] = str(output)
         write_json_file(node_dir / "artifacts.json", artifacts)
-        return {"react_artifacts": artifacts}
+        return {"d2c_artifacts": artifacts}
 
     def _scaffold_react(self, state: GraphState, node_dir: Path) -> GraphState:
-        target = Path(state["workspace_root"]) / "react"
-        copy_tree(self.templates_dir / "react", target)
-        write_json_file(node_dir / "scaffold.json", {"target": str(target)})
+        self._require_fields(state, "workspace_root", "run_root")
+        target = Path(state["run_root"]) / "react"
+        remove_path(target)
+        ensure_directory(target.parent)
+        command = self.config.scaffold.react.command.replace("{target}", shlex.quote(str(target)))
+        result = self.dependencies.command_runner(command, Path(state["workspace_root"]))
+        payload = {
+            "target": str(target),
+            **result,
+        }
+        write_json_file(node_dir / "scaffold.json", payload)
+        if result["returncode"] != 0:
+            raise RuntimeError("React scaffold failed")
+        if not target.exists():
+            raise RuntimeError("React scaffold did not create target directory")
         return {}
 
     def _generate_responsive_react(self, state: GraphState, node_dir: Path) -> GraphState:
@@ -270,8 +279,8 @@ class PipelineWorkflow:
         return {"react_generated_files": files}
 
     def _write_react_files(self, state: GraphState, node_dir: Path) -> GraphState:
-        self._require_fields(state, "workspace_root", "react_generated_files")
-        react_root = Path(state["workspace_root"]) / "react"
+        self._require_fields(state, "run_root", "react_generated_files")
+        react_root = Path(state["run_root"]) / "react"
         artifacts: dict[str, str] = {}
         for relative_path, content in state["react_generated_files"].items():
             assert_no_absolute_react_layout(content)
@@ -282,7 +291,7 @@ class PipelineWorkflow:
         return {"react_artifacts": artifacts}
 
     def _verify_react_build(self, state: GraphState, node_dir: Path) -> GraphState:
-        react_root = Path(state["workspace_root"]) / "react"
+        react_root = Path(state["run_root"]) / "react"
         result = self.dependencies.command_runner(self.config.build.react.command, react_root)
         write_json_file(node_dir / "build.json", result)
         if result["returncode"] != 0:
@@ -290,9 +299,21 @@ class PipelineWorkflow:
         return {"react_build_result": result}
 
     def _scaffold_kmp(self, state: GraphState, node_dir: Path) -> GraphState:
-        target = Path(state["workspace_root"]) / "kmp"
-        copy_tree(self.templates_dir / "kmp", target)
-        write_json_file(node_dir / "scaffold.json", {"target": str(target)})
+        self._require_fields(state, "workspace_root", "run_root")
+        target = Path(state["run_root"]) / "kmp"
+        remove_path(target)
+        ensure_directory(target.parent)
+        command = self._build_kmp_clone_command(target)
+        result = self.dependencies.command_runner(command, Path(state["workspace_root"]))
+        payload = {
+            "target": str(target),
+            **result,
+        }
+        write_json_file(node_dir / "scaffold.json", payload)
+        if result["returncode"] != 0:
+            raise RuntimeError("KMP scaffold failed")
+        if not target.exists():
+            raise RuntimeError("KMP scaffold did not create target directory")
         return {}
 
     def _generate_kmp(self, state: GraphState, node_dir: Path) -> GraphState:
@@ -315,8 +336,8 @@ class PipelineWorkflow:
         return {"kmp_generated_files": files}
 
     def _write_kmp_files(self, state: GraphState, node_dir: Path) -> GraphState:
-        self._require_fields(state, "workspace_root", "kmp_generated_files")
-        kmp_root = Path(state["workspace_root"]) / "kmp"
+        self._require_fields(state, "run_root", "kmp_generated_files")
+        kmp_root = Path(state["run_root"]) / "kmp"
         artifacts: dict[str, str] = {}
         for relative_path, content in state["kmp_generated_files"].items():
             assert_no_absolute_kmp_layout(content)
@@ -327,7 +348,7 @@ class PipelineWorkflow:
         return {"kmp_artifacts": artifacts}
 
     def _verify_kmp_build(self, state: GraphState, node_dir: Path) -> GraphState:
-        kmp_root = Path(state["workspace_root"]) / "kmp"
+        kmp_root = Path(state["run_root"]) / "kmp"
         result = self.dependencies.command_runner(self.config.build.kmp.command, kmp_root)
         write_json_file(node_dir / "build.json", result)
         if result["returncode"] != 0:
@@ -342,9 +363,11 @@ class PipelineWorkflow:
             "figma_url": state["figma_url"],
             "screenshot_path": state.get("screenshot_path"),
             "workspace_root": state["workspace_root"],
+            "run_root": state["run_root"],
             "model_plan": state.get("model_plan", {}),
             "d2c_entry": state.get("d2c_entry"),
             "node_runs": state.get("node_runs", []),
+            "d2c_artifacts": state.get("d2c_artifacts", {}),
             "react_artifacts": state.get("react_artifacts", {}),
             "react_build_result": state.get("react_build_result"),
             "kmp_artifacts": state.get("kmp_artifacts", {}),
@@ -365,7 +388,7 @@ class PipelineWorkflow:
             raise ValueError(f"Missing required state fields: {', '.join(missing)}")
 
     def _node_dir(self, state: GraphState, node_name: str) -> Path:
-        run_root = Path(state.get("run_root") or Path(state["workspace_root"]) / "runs" / state.get("thread_id", "unknown"))
+        run_root = Path(state.get("run_root") or Path(state["workspace_root"]) / state.get("thread_id", "unknown"))
         return run_root / "nodes" / node_name
 
     def _now_iso(self) -> str:
@@ -375,6 +398,14 @@ class PipelineWorkflow:
         start = datetime.fromisoformat(started_at)
         end = datetime.fromisoformat(finished_at)
         return int((end - start).total_seconds() * 1000)
+
+    def _build_kmp_clone_command(self, target: Path) -> str:
+        git_url = shlex.quote(self.config.scaffold.kmp.git_url)
+        target_arg = shlex.quote(str(target))
+        if self.config.scaffold.kmp.branch:
+            branch = shlex.quote(self.config.scaffold.kmp.branch)
+            return f"git clone --branch {branch} {git_url} {target_arg}"
+        return f"git clone {git_url} {target_arg}"
 
 
 def default_initial_state(figma_url: str, workspace_root: str) -> GraphState:

@@ -105,10 +105,31 @@ class BuildConfig(BaseModel):
     kmp: BuildCommandConfig
 
 
+class ReactScaffoldConfig(BaseModel):
+    command: str
+
+    @model_validator(mode="after")
+    def validate_target_placeholder(self) -> "ReactScaffoldConfig":
+        if "{target}" not in self.command:
+            raise ValueError("scaffold.react.command must include {target}")
+        return self
+
+
+class KmpScaffoldConfig(BaseModel):
+    git_url: str
+    branch: str | None = None
+
+
+class ScaffoldConfig(BaseModel):
+    react: ReactScaffoldConfig
+    kmp: KmpScaffoldConfig
+
+
 class AppConfig(BaseModel):
     models: ModelGroup
     figma_mcp: FigmaMcpConfig
     d2c_mcp: D2CMcpConfig
+    scaffold: ScaffoldConfig
     build: BuildConfig
 
     @classmethod

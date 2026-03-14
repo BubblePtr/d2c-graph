@@ -23,6 +23,14 @@ def reset_directory(path: str | Path) -> Path:
     return directory
 
 
+def remove_path(path: str | Path) -> None:
+    target = Path(path)
+    if target.is_dir():
+        shutil.rmtree(target)
+    elif target.exists():
+        target.unlink()
+
+
 def copy_tree(source: str | Path, destination: str | Path) -> None:
     src = Path(source)
     dst = Path(destination)

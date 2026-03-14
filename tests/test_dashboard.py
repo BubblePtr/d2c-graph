@@ -7,22 +7,22 @@ from d2c_graph.runtime import write_json_file, write_text_file
 
 
 def test_list_run_summaries_reads_manifest(tmp_path: Path) -> None:
-    run_root = tmp_path / "runs" / "thread-123"
+    run_root = tmp_path / "thread-123"
     node_root = run_root / "nodes" / "verify_react_build"
     node_root.mkdir(parents=True)
     write_json_file(
         run_root / "nodes" / "fetch_figma_screenshot" / "screenshot_summary.json",
         {
             "cache_hit": True,
-            "cache_dir": str(tmp_path / ".cache" / "figma_screenshots"),
-            "screenshot_path": str(tmp_path / ".cache" / "figma_screenshots" / "screen.png"),
+            "cache_dir": str(run_root / ".cache" / "figma_screenshots"),
+            "screenshot_path": str(run_root / ".cache" / "figma_screenshots" / "screen.png"),
         },
     )
     write_json_file(
         run_root / "nodes" / "fetch_d2c_react" / "d2c_summary.json",
         {
             "cache_hit": False,
-            "cache_dir": str(tmp_path / ".cache" / "d2c_mcp"),
+            "cache_dir": str(run_root / ".cache" / "d2c_mcp"),
             "files": ["src/App.tsx"],
         },
     )
@@ -58,14 +58,14 @@ def test_list_run_summaries_reads_manifest(tmp_path: Path) -> None:
 
 
 def test_load_run_detail_reads_node_files_without_manifest(tmp_path: Path) -> None:
-    node_root = tmp_path / "runs" / "thread-456" / "nodes" / "generate_react"
+    node_root = tmp_path / "thread-456" / "nodes" / "generate_react"
     node_root.mkdir(parents=True)
     write_json_file(
-        tmp_path / "runs" / "thread-456" / "nodes" / "fetch_figma_screenshot" / "screenshot_summary.json",
+        tmp_path / "thread-456" / "nodes" / "fetch_figma_screenshot" / "screenshot_summary.json",
         {
             "cache_hit": True,
-            "cache_dir": str(tmp_path / ".cache" / "figma_screenshots"),
-            "screenshot_path": str(tmp_path / ".cache" / "figma_screenshots" / "screen.png"),
+            "cache_dir": str(tmp_path / "thread-456" / ".cache" / "figma_screenshots"),
+            "screenshot_path": str(tmp_path / "thread-456" / ".cache" / "figma_screenshots" / "screen.png"),
         },
     )
     write_text_file(node_root / "prompt.txt", "prompt body")
@@ -84,3 +84,22 @@ def test_load_run_detail_reads_node_files_without_manifest(tmp_path: Path) -> No
         "prompt.txt",
         "response.txt",
     }
+
+
+def test_dashboard_still_reads_legacy_runs_directory(tmp_path: Path) -> None:
+    run_root = tmp_path / "runs" / "thread-legacy"
+    run_root.mkdir(parents=True)
+    write_json_file(
+        run_root / "manifest.json",
+        {
+            "thread_id": "thread-legacy",
+            "figma_url": "https://figma.example.com/file/legacy",
+            "workspace_root": str(tmp_path),
+            "node_runs": [],
+        },
+    )
+
+    summaries = list_run_summaries(tmp_path)
+
+    assert len(summaries) == 1
+    assert summaries[0]["thread_id"] == "thread-legacy"
